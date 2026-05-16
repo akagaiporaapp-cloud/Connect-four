@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>Connect Four | Firebase Multiplayer Match</title>
+<title>Connect Four | Auto Matchmaking</title>
 <style>
   * {
     margin: 0;
@@ -75,33 +75,6 @@
     color: #F1F5F9;
     box-shadow: inset 0 1px 2px rgba(0,0,0,0.3), 0 2px 5px rgba(0,0,0,0.2);
     flex-shrink: 0;
-  }
-
-  /* Área exclusiva do convite quando falta o segundo jogador */
-  .invite-area {
-    display: none;
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px dashed #3b82f680;
-    padding: 10px;
-    border-radius: 20px;
-    margin-bottom: 12px;
-    text-align: center;
-    flex-shrink: 0;
-  }
-
-  .invite-area p {
-    color: #93c5fd;
-    font-size: 0.8rem;
-    margin-bottom: 6px;
-  }
-
-  .share-btn {
-    background: #3b82f6;
-    box-shadow: 0 3px 0 #1d4ed8;
-    padding: 6px 14px;
-    font-size: 0.8rem;
-    width: auto;
-    display: inline-block;
   }
 
   .board {
@@ -332,7 +305,7 @@
   <div class="modal-content">
     <h2>Qual o seu nome?</h2>
     <input type="text" id="usernameInput" placeholder="Ex: Player 1" maxlength="12" autocomplete="off" />
-    <button id="joinGameBtn">Entrar no Jogo</button>
+    <button id="joinGameBtn">Procurar Partida ⚡</button>
   </div>
 </div>
 
@@ -345,12 +318,6 @@
     Aguardando identificação...
   </div>
 
-  <!-- Caixa Dinâmica de Convite -->
-  <div class="invite-area" id="inviteArea">
-    <p>Seu amigo ainda não entrou na partida.</p>
-    <button class="share-btn" id="shareBtn">🔗 Copiar Link de Convite</button>
-  </div>
-
   <div class="board" id="board"></div>
 
   <div class="controls">
@@ -361,21 +328,21 @@
   <div class="scoreboard">
     <div class="score">
       <h3>🔴 VERMELHO</h3>
-      <div class="player-name" id="nameRef-red">Aguardando...</div>
+      <div class="player-name" id="nameRef-red">Procurando...</div>
       <p id="redScore">0</p>
     </div>
     <div class="score">
       <h3>🟡 AMARELO</h3>
-      <div class="player-name" id="nameRef-yellow">Aguardando...</div>
+      <div class="player-name" id="nameRef-yellow">Procurando...</div>
       <p id="yellowScore">0</p>
     </div>
   </div>
-  <footer id="room-footer">Sala: Carregando...</footer>
+  <footer id="room-footer">Buscando servidor estável...</footer>
 </div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getDatabase, ref, set, onValue, update, runTransaction, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+  import { getDatabase, ref, set, onValue, update, runTransaction, onDisconnect, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyCC26_ayjIvJmPoneYzNmMj3OwCXRbc_-g",
@@ -394,15 +361,9 @@
   
   let myRole = null; 
   let myNickname = "Anônimo";
-  let gameState = {
-    board: Array(ROWS).fill(null).map(() => Array(COLS).fill(null)),
-    currentPlayer: 'red',
-    gameOver: false,
-    redScore: 0,
-    yellowScore: 0,
-    playerNames: { red: "Aguardando...", yellow: "Aguardando..." },
-    players: { red: null, yellow: null }
-  };
+  let roomName = null;
+  let roomRef = null;
+  let gameState = {};
 
   const boardElement = document.getElementById('board');
   const statusText = document.getElementById('status');
@@ -410,36 +371,6 @@
   const yellowScoreElem = document.getElementById('yellowScore');
   const nameRefRed = document.getElementById('nameRef-red');
   const nameRefYellow = document.getElementById('nameRef-yellow');
-  const inviteArea = document.getElementById('inviteArea');
-  const shareBtn = document.getElementById('shareBtn');
-
-  // Lógica corrigida de salas via parâmetros de URL
-  const urlParams = new URLSearchParams(window.location.search);
-  let roomName = urlParams.get('room');
-  
-  if (!roomName) {
-    // Se não há sala na URL, este aparelho cria uma inédita
-    roomName = 'sala_' + Math.random().toString(36).substring(2, 7);
-    urlParams.set('room', roomName);
-    window.history.replaceState({}, '', `${window.location.pathname}?${urlParams.toString()}`);
-  }
-  document.getElementById('room-footer').innerText = `Sala: ${roomName}`;
-
-  const roomRef = ref(db, `rooms/${roomName}`);
-
-  // Botão de Cópia de Link de Convite
-  shareBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(window.location.href).then(() => {
-      shareBtn.innerText = "✅ Link Copiado!";
-      shareBtn.style.background = "#10b981";
-      setTimeout(() => {
-        shareBtn.innerText = "🔗 Copiar Link de Convite";
-        shareBtn.style.background = "#3b82f6";
-      }, 2000);
-    }).catch(err => {
-      alert("Copie a URL do seu navegador para enviar ao amigo!");
-    });
-  });
 
   document.getElementById('joinGameBtn').addEventListener('click', () => {
     const input = document.getElementById('usernameInput');
@@ -452,56 +383,84 @@
       document.getElementById('nameModal').style.display = 'none';
     }, 300);
 
-    joinGame();
+    statusText.innerHTML = '🔍 Procurando salas disponíveis...';
+    findOrCreateMatch();
   });
 
   document.getElementById('usernameInput').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') document.getElementById('joinGameBtn').click();
   });
 
-  function joinGame() {
-    const playersRef = ref(db, `rooms/${roomName}/players`);
+  // ========== LÓGICA DE MATCHMAKING (VARREDURA AUTOMÁTICA) ==========
+  function findOrCreateMatch() {
+    const allRoomsRef = ref(db, 'rooms');
     
-    runTransaction(playersRef, (currentPlayers) => {
-      if (!currentPlayers) currentPlayers = {};
+    get(allRoomsRef).then((snapshot) => {
+      let targetRoom = null;
       
-      if (!currentPlayers.red) {
-        myRole = 'red';
-        currentPlayers.red = 'active';
-      } else if (!currentPlayers.yellow) {
-        myRole = 'yellow';
-        currentPlayers.yellow = 'active';
-      } else {
-        myRole = 'spectator';
+      if (snapshot.exists()) {
+        const rooms = snapshot.val();
+        // Varre as salas existentes procurando uma que precise de um Amarelo
+        for (const id in rooms) {
+          const r = rooms[id];
+          if (r.players && r.players.red === 'active' && (!r.players.yellow || r.players.yellow !== 'active')) {
+            targetRoom = id;
+            break;
+          }
+        }
       }
-      return currentPlayers;
-    }).then(() => {
+      
+      if (targetRoom) {
+        // Encontrou! Conecta como Amarelo
+        roomName = targetRoom;
+        myRole = 'yellow';
+        connectToRoom();
+      } else {
+        // Nenhuma livre, cria uma sala nova inédita como Vermelho
+        roomName = 'match_' + Math.random().toString(36).substring(2, 9);
+        myRole = 'red';
+        connectToRoom();
+      }
+    }).catch(() => {
+      // Fallback em caso de erro de leitura inicial
+      roomName = 'match_' + Math.random().toString(36).substring(2, 9);
+      myRole = 'red';
+      connectToRoom();
+    });
+  }
+
+  function connectToRoom() {
+    roomRef = ref(db, `rooms/${roomName}`);
+    document.getElementById('room-footer').innerText = `ID da Partida: ${roomName}`;
+
+    const slotRef = ref(db, `rooms/${roomName}/players/${myRole}`);
+    set(slotRef, 'active').then(() => {
+      // Registra o nome e configura limpeza automática em caso de queda
       if (myRole === 'red') {
         update(ref(db, `rooms/${roomName}/playerNames`), { red: `${myNickname} (Você)` });
         onDisconnect(ref(db, `rooms/${roomName}/players/red`)).remove();
         onDisconnect(ref(db, `rooms/${roomName}/playerNames/red`)).set("Desconectado");
-      } else if (myRole === 'yellow') {
+      } else {
         update(ref(db, `rooms/${roomName}/playerNames`), { yellow: `${myNickname} (Você)` });
         onDisconnect(ref(db, `rooms/${roomName}/players/yellow`)).remove();
         onDisconnect(ref(db, `rooms/${roomName}/playerNames/yellow`)).set("Desconectado");
       }
-      
+
+      // Inicializa o tabuleiro caso você seja o criador (Vermelho)
+      if (myRole === 'red') {
+        resetDatabaseState(true);
+      }
+
+      // Começa a escutar as atualizações em tempo real da sala pareada
       onValue(roomRef, (snapshot) => {
-        if (!snapshot.hasChild('board')) {
-          resetDatabaseState(true);
-        }
-      }, { onlyOnce: true });
+        const data = snapshot.val();
+        if (!data || !data.board) return;
+        gameState = data;
+        renderBoard();
+        updateUI();
+      });
     });
   }
-
-  onValue(roomRef, (snapshot) => {
-    const data = snapshot.val();
-    if (!data || !data.board) return;
-
-    gameState = data;
-    renderBoard();
-    updateUI();
-  });
 
   function renderBoard() {
     boardElement.innerHTML = '';
@@ -524,8 +483,8 @@
     yellowScoreElem.innerText = gameState.yellowScore || 0;
 
     const names = gameState.playerNames || {};
-    let redDisplayName = names.red || "Aguardando...";
-    let yellowDisplayName = names.yellow || "Aguardando...";
+    let redDisplayName = names.red || "Procurando...";
+    let yellowDisplayName = names.yellow || "Procurando...";
 
     if(myRole === 'yellow' && redDisplayName.includes('(Você)')) redDisplayName = redDisplayName.replace(' (Você)', '');
     if(myRole === 'red' && yellowDisplayName.includes('(Você)')) yellowDisplayName = yellowDisplayName.replace(' (Você)', '');
@@ -533,13 +492,10 @@
     nameRefRed.innerText = redDisplayName;
     nameRefYellow.innerText = yellowDisplayName;
 
-    // Gerenciamento visual do convite pendente
-    if (!gameState.players || !gameState.players.red || !gameState.players.yellow) {
-      statusText.innerHTML = '⏳ Aguardando segundo jogador...';
-      inviteArea.style.display = 'block'; // Mostra botão de cópia
+    const activePlayers = gameState.players || {};
+    if (!activePlayers.red || !activePlayers.yellow) {
+      statusText.innerHTML = '⏳ Aguardando oponente entrar na fila...';
       return;
-    } else {
-      inviteArea.style.display = 'none'; // Esconde se a sala estiver cheia
     }
 
     if (gameState.gameOver) {
@@ -587,7 +543,7 @@
   function dropPiece(col) {
     if (gameState.gameOver || myRole === 'spectator') return;
     if (gameState.currentPlayer !== myRole) return; 
-    if (!gameState.players.red || !gameState.players.yellow) return; 
+    if (!gameState.players || !gameState.players.red || !gameState.players.yellow) return; 
 
     let targetRow = -1;
     for (let row = ROWS - 1; row >= 0; row--) {
@@ -664,7 +620,7 @@
   }
 
   function resetDatabaseState(clearScores = false) {
-    if (myRole === 'spectator' || gameState.gameOver === false) return; 
+    if (myRole === 'spectator' || (gameState.board && gameState.gameOver === false)) return; 
     
     const freshState = {
       board: Array(ROWS).fill(null).map(() => Array(COLS).fill(null)),
