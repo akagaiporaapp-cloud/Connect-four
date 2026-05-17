@@ -391,47 +391,45 @@
     if (e.key === 'Enter') document.getElementById('joinGameBtn').click();
   });
 
-  // ========== LÓGICA DE FILA ATÔMICA SEM REPETIÇÃO ==========
   function startMatchmaking() {
     const queueRef = ref(db, 'matchmaking_queue');
 
     runTransaction(queueRef, (currentQueue) => {
-      // Se não há ninguém na fila, eu me coloco na fila com uma nova sala
       if (currentQueue === null) {
+        // Fila vazia: Cria a intenção de sala
         const newRoomId = 'match_' + Math.random().toString(36).substring(2, 9);
-        return {
-          roomId: newRoomId,
-          hostName: myNickname
-        };
+        return { roomId: newRoomId, hostName: myNickname };
       } else {
-        // Se já tem alguém, eu puxo os dados da sala dele e limpo a fila retornando null
-        return null; 
+        // Já tem alguém: Retorna vazio para limpar o nó de forma atômica
+        return null;
       }
     }).then((result) => {
-      const transactionData = result.snapshot.val();
+      // Pega o valor lido imediatamente ANTES ou DEPOIS do processamento
+      const snapshotVal = result.snapshot.val();
 
-      // Caso 1: A transação salvou meus dados na fila, sou o CRIADOR (Vermelho)
-      if (result.committed && transactionData !== null) {
-        roomName = transactionData.roomId;
+      if (result.committed && snapshotVal !== null) {
+        // Sou o dono da nova sala
+        roomName = snapshotVal.roomId;
         myRole = 'red';
-        
-        // Se eu fechar a aba enquanto estiver na fila sozinho, limpo a fila global
         onDisconnect(queueRef).remove();
         connectToRoom();
       } else {
-        // Caso 2: A transação limpou a fila porque eu peguei o criador existente, sou o DESAFIANTE (Amarelo)
-        // Buscamos o valor que estava lá ANTES de limparmos
-        const oldQueueValue = result.snapshot.node_.value_; 
+        // Peguei um jogador que já estava lá. Resgatamos o ID antigo direto do histórico estável da árvore
+        const oldQueueValue = result.snapshot.node_ ? result.snapshot.node_.value_ : null;
         
         if (oldQueueValue && oldQueueValue.roomId) {
           roomName = oldQueueValue.roomId;
           myRole = 'yellow';
           connectToRoom();
         } else {
-          // Fallback de segurança milimétrica caso dê conflito raro de concorrência pura
-          setTimeout(startMatchmaking, 500);
+          // Fallback caso ambos limpem ao mesmo tempo por instabilidade de rede local
+          setTimeout(startMatchmaking, 400);
         }
       }
+    }).catch((err) => {
+      console.error(err);
+      statusText.innerHTML = '❌ Erro de conexão. Tentando novamente...';
+      setTimeout(startMatchmaking, 1000);
     });
   }
 
@@ -439,7 +437,6 @@
     roomRef = ref(db, `rooms/${roomName}`);
     document.getElementById('room-footer').innerText = `ID da Partida: ${roomName}`;
 
-    // Registra entrada no slot correto do Firebase
     update(ref(db, `rooms/${roomName}/players`), { [myRole]: 'active' }).then(() => {
       
       if (myRole === 'red') {
@@ -447,22 +444,23 @@
         onDisconnect(ref(db, `rooms/${roomName}/players/red`)).remove();
         onDisconnect(ref(db, `rooms/${roomName}/playerNames/red`)).set("Desconectado");
         
-        // Inicializa estrutura base da sala vazia
-        resetDatabaseState(true);
+        // Força a criação do estado inicial do jogo direto no banco
+        set(ref(db, `rooms/${roomName}`), {
+          board: Array(ROWS).fill(null).map(() => Array(COLS).fill(null)),
+          currentPlayer: 'red',
+          gameOver: false,
+          winner: null,
+          redScore: 0,
+          yellowScore: 0,
+          players: { red: 'active' },
+          playerNames: { red: `${myNickname} (Você)`, yellow: "Procurando..." }
+        });
       } else {
         update(ref(db, `rooms/${roomName}/playerNames`), { yellow: `${myNickname} (Você)` });
         onDisconnect(ref(db, `rooms/${roomName}/players/yellow`)).remove();
         onDisconnect(ref(db, `rooms/${roomName}/playerNames/yellow`)).set("Desconectado");
-        
-        // Remove a trava de segurança de recarga caso o player 1 caia antes do player 2 fixar
-        ref(db, 'matchmaking_queue').get().then(snap => {
-          if (snap.exists() && snap.val().roomId === roomName) {
-            set(ref(db, 'matchmaking_queue'), null);
-          }
-        });
       }
 
-      // Escuta mudanças síncronas em tempo real
       onValue(roomRef, (snapshot) => {
         const data = snapshot.val();
         if (!data || !data.board) return;
