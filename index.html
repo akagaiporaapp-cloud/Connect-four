@@ -337,12 +337,12 @@
       <p id="yellowScore">0</p>
     </div>
   </div>
-  <footer id="room-footer">Lobby Global ativo</footer>
+  <footer id="room-footer">Buscando servidor...</footer>
 </div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getDatabase, ref, set, onValue, update, runTransaction, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+  import { getDatabase, ref, set, onValue, update, runTransaction, onDisconnect, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyCC26_ayjIvJmPoneYzNmMj3OwCXRbc_-g",
@@ -361,8 +361,8 @@
   
   let myRole = null; 
   let myNickname = "Anônimo";
-  const roomName = "lobby"; // ID fixo que centraliza os dois celulares obrigatoriamente
-  const roomRef = ref(db, `rooms/${roomName}`);
+  let roomName = null;
+  let roomRef = null;
   let gameState = {};
 
   const boardElement = document.getElementById('board');
@@ -383,72 +383,88 @@
       document.getElementById('nameModal').style.display = 'none';
     }, 300);
 
-    statusText.innerHTML = '🔍 Conectando ao Lobby central...';
-    joinLobby();
+    statusText.innerHTML = '🔍 Conectando ao pareamento rápido...';
+    startMatchmaking();
   });
 
   document.getElementById('usernameInput').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') document.getElementById('joinGameBtn').click();
   });
 
-  // ========== SISTEMA DE LOBBY ESTÁTICO DE ALTA VELOCIDADE ==========
-  function joinLobby() {
-    const seatRef = ref(db, `rooms/${roomName}/players`);
+  // ========== LÓGICA DE FILA RESILIENTE ==========
+  function startMatchmaking() {
+    const queueRef = ref(db, 'queue');
 
-    runTransaction(seatRef, (currentPlayers) => {
-      if (currentPlayers === null) {
-        // Se o lobby está 100% livre, eu sou o Vermelho
-        return { red: "active", yellow: "" };
-      }
-      if (!currentPlayers.red || currentPlayers.red === "") {
-        currentPlayers.red = "active";
-        return currentPlayers;
-      }
-      if (!currentPlayers.yellow || currentPlayers.yellow === "") {
-        currentPlayers.yellow = "active";
-        return currentPlayers;
-      }
-      // Se ambos os slots estiverem preenchidos, entra como espectador temporário
-      return undefined;
-    }).then((result) => {
-      const players = result.snapshot.val();
-
-      // Mapeia qual slot nós conseguimos garantir atomicamente
-      if (players && players.yellow === "active" && myRole === null) {
-        // O Vermelho já existia estável, então assumimos o Amarelo
-        if (players.red === "active" && result.committed) {
-           myRole = 'yellow';
-        } else {
-           myRole = 'red';
-        }
-      } else if (result.committed) {
+    // Forçamos uma leitura direta para evitar conflito de cache inicial da transação
+    get(queueRef).then((snapshot) => {
+      if (!snapshot.exists() || snapshot.val() === "") {
+        // FILA VAZIA: Eu sou o Player 1 (Vermelho), crio a sala e me coloco na fila
+        roomName = 'room_' + Math.random().toString(36).substring(2, 9);
         myRole = 'red';
-      } else {
-        myRole = 'spectator';
-      }
 
-      // Registra os metadados de exibição de nomes e onDisconnect
-      if (myRole === 'red') {
-        update(ref(db, `rooms/${roomName}/playerNames`), { red: `${myNickname} (Você)` });
+        // Garante que se eu fechar a aba antes de alguém entrar, limpo a fila global
+        onDisconnect(queueRef).set("");
+
+        set(queueRef, roomName).then(() => {
+          connectToRoom();
+        });
+      } else {
+        // FILA OCUPADA: Capturo o ID da sala criada pelo Player 1 e limpo a fila para os próximos
+        roomName = snapshot.val();
+        myRole = 'yellow';
+
+        set(queueRef, "").then(() => {
+          connectToRoom();
+        });
+      }
+    }).catch((err) => {
+      console.error(err);
+      // Fallback automático em loop se houver oscilação de rede
+      setTimeout(startMatchmaking, 500);
+    });
+  }
+
+  function connectToRoom() {
+    roomRef = ref(db, `rooms/${roomName}`);
+    document.getElementById('room-footer').innerText = `ID da Partida: ${roomName}`;
+
+    // Inicialização forçada e completa do nó de dados da sala
+    if (myRole === 'red') {
+      const initialPayload = {
+        board: Array(ROWS).fill(null).map(() => Array(COLS).fill(null)),
+        currentPlayer: 'red',
+        gameOver: false,
+        winner: null,
+        redScore: 0,
+        yellowScore: 0,
+        players: { red: "active", yellow: "" },
+        playerNames: { red: `${myNickname} (Você)`, yellow: "Procurando..." }
+      };
+
+      set(roomRef, initialPayload).then(() => {
         onDisconnect(ref(db, `rooms/${roomName}/players/red`)).set("");
         onDisconnect(ref(db, `rooms/${roomName}/playerNames/red`)).set("Desconectado");
-        
-        // Inicializa/Reseta o tabuleiro padrão para começar a partida limpa
-        resetDatabaseState(true);
-      } else if (myRole === 'yellow') {
-        update(ref(db, `rooms/${roomName}/playerNames`), { yellow: `${myNickname} (Você)` });
-        onDisconnect(ref(db, `rooms/${roomName}/players/yellow`)).set("");
-        onDisconnect(ref(db, `rooms/${roomName}/playerNames/yellow`)).set("Desconectado");
-      }
-
-      // Inicia a escuta em tempo real do canal único
-      onValue(roomRef, (snapshot) => {
-        const data = snapshot.val();
-        if (!data || !data.board) return;
-        gameState = data;
-        renderBoard();
-        updateUI();
+        startListening();
       });
+    } else {
+      // Jogador Amarelo atualiza os seus respectivos slots
+      update(ref(db, `rooms/${roomName}/players`), { yellow: "active" });
+      update(ref(db, `rooms/${roomName}/playerNames`), { yellow: `${myNickname} (Você)` });
+      
+      onDisconnect(ref(db, `rooms/${roomName}/players/yellow`)).set("");
+      onDisconnect(ref(db, `rooms/${roomName}/playerNames/yellow`)).set("Desconectado");
+      
+      startListening();
+    }
+  }
+
+  function startListening() {
+    onValue(roomRef, (snapshot) => {
+      const data = snapshot.val();
+      if (!data || !data.board) return;
+      gameState = data;
+      renderBoard();
+      updateUI();
     });
   }
 
@@ -473,8 +489,8 @@
     yellowScoreElem.innerText = gameState.yellowScore || 0;
 
     const names = gameState.playerNames || {};
-    let redDisplayName = names.red || "Procurando...";
-    let yellowDisplayName = names.yellow || "Procurando...";
+    let redDisplayName = names.red || "Conectando...";
+    let yellowDisplayName = names.yellow || "Conectando...";
 
     if(myRole === 'yellow' && redDisplayName.includes('(Você)')) redDisplayName = redDisplayName.replace(' (Você)', '');
     if(myRole === 'red' && yellowDisplayName.includes('(Você)')) yellowDisplayName = yellowDisplayName.replace(' (Você)', '');
@@ -484,7 +500,7 @@
 
     const activePlayers = gameState.players || {};
     if (!activePlayers.red || activePlayers.red !== "active" || !activePlayers.yellow || activePlayers.yellow !== "active") {
-      statusText.innerHTML = '⏳ Aguardando oponente entrar no lobby...';
+      statusText.innerHTML = '⏳ Aguardando oponente entrar na fila...';
       return;
     }
 
@@ -610,7 +626,7 @@
   }
 
   function resetDatabaseState(clearScores = false) {
-    if (myRole === 'spectator') return; 
+    if (myRole === 'spectator' || (gameState.board && gameState.gameOver === false)) return; 
     
     const freshState = {
       board: Array(ROWS).fill(null).map(() => Array(COLS).fill(null)),
