@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>Connect Four | Perfect Matchmaking</title>
+<title>Connect Four | Realtime Matchmaking</title>
 <style>
   * {
     margin: 0;
@@ -337,7 +337,7 @@
       <p id="yellowScore">0</p>
     </div>
   </div>
-  <footer id="room-footer">Buscando servidor...</footer>
+  <footer id="room-footer">Lobby Global ativo</footer>
 </div>
 
 <script type="module">
@@ -361,8 +361,8 @@
   
   let myRole = null; 
   let myNickname = "Anônimo";
-  let roomName = null;
-  let roomRef = null;
+  const roomName = "lobby"; // ID fixo que centraliza os dois celulares obrigatoriamente
+  const roomRef = ref(db, `rooms/${roomName}`);
   let gameState = {};
 
   const boardElement = document.getElementById('board');
@@ -383,84 +383,65 @@
       document.getElementById('nameModal').style.display = 'none';
     }, 300);
 
-    statusText.innerHTML = '🔍 Entrando na fila global...';
-    startMatchmaking();
+    statusText.innerHTML = '🔍 Conectando ao Lobby central...';
+    joinLobby();
   });
 
   document.getElementById('usernameInput').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') document.getElementById('joinGameBtn').click();
   });
 
-  function startMatchmaking() {
-    const queueRef = ref(db, 'matchmaking_queue');
+  // ========== SISTEMA DE LOBBY ESTÁTICO DE ALTA VELOCIDADE ==========
+  function joinLobby() {
+    const seatRef = ref(db, `rooms/${roomName}/players`);
 
-    runTransaction(queueRef, (currentQueue) => {
-      if (currentQueue === null) {
-        // Fila vazia: Cria a intenção de sala
-        const newRoomId = 'match_' + Math.random().toString(36).substring(2, 9);
-        return { roomId: newRoomId, hostName: myNickname };
-      } else {
-        // Já tem alguém: Retorna vazio para limpar o nó de forma atômica
-        return null;
+    runTransaction(seatRef, (currentPlayers) => {
+      if (currentPlayers === null) {
+        // Se o lobby está 100% livre, eu sou o Vermelho
+        return { red: "active", yellow: "" };
       }
+      if (!currentPlayers.red || currentPlayers.red === "") {
+        currentPlayers.red = "active";
+        return currentPlayers;
+      }
+      if (!currentPlayers.yellow || currentPlayers.yellow === "") {
+        currentPlayers.yellow = "active";
+        return currentPlayers;
+      }
+      // Se ambos os slots estiverem preenchidos, entra como espectador temporário
+      return undefined;
     }).then((result) => {
-      // Pega o valor lido imediatamente ANTES ou DEPOIS do processamento
-      const snapshotVal = result.snapshot.val();
+      const players = result.snapshot.val();
 
-      if (result.committed && snapshotVal !== null) {
-        // Sou o dono da nova sala
-        roomName = snapshotVal.roomId;
-        myRole = 'red';
-        onDisconnect(queueRef).remove();
-        connectToRoom();
-      } else {
-        // Peguei um jogador que já estava lá. Resgatamos o ID antigo direto do histórico estável da árvore
-        const oldQueueValue = result.snapshot.node_ ? result.snapshot.node_.value_ : null;
-        
-        if (oldQueueValue && oldQueueValue.roomId) {
-          roomName = oldQueueValue.roomId;
-          myRole = 'yellow';
-          connectToRoom();
+      // Mapeia qual slot nós conseguimos garantir atomicamente
+      if (players && players.yellow === "active" && myRole === null) {
+        // O Vermelho já existia estável, então assumimos o Amarelo
+        if (players.red === "active" && result.committed) {
+           myRole = 'yellow';
         } else {
-          // Fallback caso ambos limpem ao mesmo tempo por instabilidade de rede local
-          setTimeout(startMatchmaking, 400);
+           myRole = 'red';
         }
+      } else if (result.committed) {
+        myRole = 'red';
+      } else {
+        myRole = 'spectator';
       }
-    }).catch((err) => {
-      console.error(err);
-      statusText.innerHTML = '❌ Erro de conexão. Tentando novamente...';
-      setTimeout(startMatchmaking, 1000);
-    });
-  }
 
-  function connectToRoom() {
-    roomRef = ref(db, `rooms/${roomName}`);
-    document.getElementById('room-footer').innerText = `ID da Partida: ${roomName}`;
-
-    update(ref(db, `rooms/${roomName}/players`), { [myRole]: 'active' }).then(() => {
-      
+      // Registra os metadados de exibição de nomes e onDisconnect
       if (myRole === 'red') {
         update(ref(db, `rooms/${roomName}/playerNames`), { red: `${myNickname} (Você)` });
-        onDisconnect(ref(db, `rooms/${roomName}/players/red`)).remove();
+        onDisconnect(ref(db, `rooms/${roomName}/players/red`)).set("");
         onDisconnect(ref(db, `rooms/${roomName}/playerNames/red`)).set("Desconectado");
         
-        // Força a criação do estado inicial do jogo direto no banco
-        set(ref(db, `rooms/${roomName}`), {
-          board: Array(ROWS).fill(null).map(() => Array(COLS).fill(null)),
-          currentPlayer: 'red',
-          gameOver: false,
-          winner: null,
-          redScore: 0,
-          yellowScore: 0,
-          players: { red: 'active' },
-          playerNames: { red: `${myNickname} (Você)`, yellow: "Procurando..." }
-        });
-      } else {
+        // Inicializa/Reseta o tabuleiro padrão para começar a partida limpa
+        resetDatabaseState(true);
+      } else if (myRole === 'yellow') {
         update(ref(db, `rooms/${roomName}/playerNames`), { yellow: `${myNickname} (Você)` });
-        onDisconnect(ref(db, `rooms/${roomName}/players/yellow`)).remove();
+        onDisconnect(ref(db, `rooms/${roomName}/players/yellow`)).set("");
         onDisconnect(ref(db, `rooms/${roomName}/playerNames/yellow`)).set("Desconectado");
       }
 
+      // Inicia a escuta em tempo real do canal único
       onValue(roomRef, (snapshot) => {
         const data = snapshot.val();
         if (!data || !data.board) return;
@@ -492,8 +473,8 @@
     yellowScoreElem.innerText = gameState.yellowScore || 0;
 
     const names = gameState.playerNames || {};
-    let redDisplayName = names.red || "Conectando...";
-    let yellowDisplayName = names.yellow || "Conectando...";
+    let redDisplayName = names.red || "Procurando...";
+    let yellowDisplayName = names.yellow || "Procurando...";
 
     if(myRole === 'yellow' && redDisplayName.includes('(Você)')) redDisplayName = redDisplayName.replace(' (Você)', '');
     if(myRole === 'red' && yellowDisplayName.includes('(Você)')) yellowDisplayName = yellowDisplayName.replace(' (Você)', '');
@@ -502,8 +483,8 @@
     nameRefYellow.innerText = yellowDisplayName;
 
     const activePlayers = gameState.players || {};
-    if (!activePlayers.red || !activePlayers.yellow) {
-      statusText.innerHTML = '⏳ Aguardando oponente entrar na fila...';
+    if (!activePlayers.red || activePlayers.red !== "active" || !activePlayers.yellow || activePlayers.yellow !== "active") {
+      statusText.innerHTML = '⏳ Aguardando oponente entrar no lobby...';
       return;
     }
 
@@ -552,7 +533,7 @@
   function dropPiece(col) {
     if (gameState.gameOver || myRole === 'spectator') return;
     if (gameState.currentPlayer !== myRole) return; 
-    if (!gameState.players || !gameState.players.red || !gameState.players.yellow) return; 
+    if (!gameState.players || gameState.players.red !== "active" || gameState.players.yellow !== "active") return; 
 
     let targetRow = -1;
     for (let row = ROWS - 1; row >= 0; row--) {
@@ -629,7 +610,7 @@
   }
 
   function resetDatabaseState(clearScores = false) {
-    if (myRole === 'spectator' || (gameState.board && gameState.gameOver === false)) return; 
+    if (myRole === 'spectator') return; 
     
     const freshState = {
       board: Array(ROWS).fill(null).map(() => Array(COLS).fill(null)),
