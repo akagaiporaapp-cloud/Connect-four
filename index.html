@@ -74,6 +74,7 @@
             border-radius: 8px;
             background-color: #ddd;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
         }
 
         .player-card.red-active { background-color: #ff4136; color: white; }
@@ -178,8 +179,8 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         
-        const gameRef = ref(db, 'game_state');
-        const playersRef = ref(db, 'players');
+        // Referência centralizada da sala
+        const roomRef = ref(db, 'game_room');
 
         const ROWS = 6;
         const COLS = 7;
@@ -197,13 +198,19 @@
 
         let myRole = ""; 
         let myNick = "";
-        let currentPlayersState = {};
         const myPlayerId = Math.random().toString(36).substring(2, 9);
 
-        let gameState = {
-            board: Array(ROWS).fill(null).map(() => Array(COLS).fill('')),
-            turn: 'red',
-            winner: ''
+        // Estado unificado local
+        let roomState = {
+            players: {
+                player1: null,
+                player2: null
+            },
+            gameState: {
+                board: Array(ROWS).fill(null).map(() => Array(COLS).fill('')),
+                turn: 'red',
+                winner: ''
+            }
         };
 
         enterBtn.addEventListener('click', () => {
@@ -216,68 +223,53 @@
             loginScreen.style.display = 'none';
             gameScreen.style.display = 'flex';
             
-            setupPlayersPresence();
+            initRoomConnection();
         });
 
-        // 1. GERENCIAMENTO DE PRESENÇA COM TRAVA DE SEGURANÇA
-        async function setupPlayersPresence() {
-            // Faz uma leitura única inicial para garantir assento correto antes de ouvir o banco continuamente
-            const snapshot = await get(playersRef);
-            const players = snapshot.val() || {};
+        // 1. CONEXÃO UNIFICADA E CRIAÇÃO DA SALA
+        async function initRoomConnection() {
+            const snapshot = await get(roomRef);
+            let currentRoom = snapshot.val();
 
-            if (!players.player1) {
+            // Se a sala não existir no Firebase, estruturamos do zero
+            if (!currentRoom) {
+                currentRoom = {
+                    players: { player1: '', player2: '' },
+                    gameState: {
+                        board: Array(ROWS).fill(null).map(() => Array(COLS).fill('')),
+                        turn: 'red',
+                        winner: ''
+                    }
+                };
+            }
+
+            // Definição rígida de papéis
+            if (!currentRoom.players || !currentRoom.players.player1) {
                 myRole = "red";
-                await set(ref(db, 'players/player1'), { id: myPlayerId, nick: myNick });
-                onDisconnect(ref(db, 'players/player1')).remove(); 
-            } else if (!players.player2) {
+                await set(ref(db, 'game_room/players/player1'), { id: myPlayerId, nick: myNick });
+                onDisconnect(ref(db, 'game_room/players/player1')).remove(); 
+            } else if (!currentRoom.players.player2) {
                 myRole = "yellow";
-                await set(ref(db, 'players/player2'), { id: myPlayerId, nick: myNick });
-                onDisconnect(ref(db, 'players/player2')).remove();
+                await set(ref(db, 'game_room/players/player2'), { id: myPlayerId, nick: myNick });
+                onDisconnect(ref(db, 'game_room/players/player2')).remove();
             } else {
                 myRole = "spectator";
             }
 
-            // Ouve as atualizações contínuas de jogadores e do estado do jogo
-            onValue(playersRef, (playerSnapshot) => {
-                currentPlayersState = playerSnapshot.val() || {};
-                
-                if (currentPlayersState.player1) {
-                    p1Display.innerText = `🔴 Vermelho: ${currentPlayersState.player1.nick}`;
-                    p1Display.classList.add('red-active');
-                } else {
-                    p1Display.innerText = "🔴 Vermelho: Aguardando...";
-                    p1Display.classList.remove('red-active');
-                }
-
-                if (currentPlayersState.player2) {
-                    p2Display.innerText = `🟡 Amarelo: ${currentPlayersState.player2.nick}`;
-                    p2Display.classList.add('yellow-active');
-                } else {
-                    p2Display.innerText = "🟡 Amarelo: Aguardando...";
-                    p2Display.classList.remove('yellow-active');
-                }
-
-                if (myRole === "spectator") {
-                    resetBtn.style.display = 'none';
-                } else {
-                    resetBtn.style.display = 'block';
-                }
-                
-                updateUI();
-            });
-
-            onValue(gameRef, (gameSnapshot) => {
-                const data = gameSnapshot.val();
+            // Um único ouvinte para a sala inteira (jogadores + tabuleiro mudam juntos)
+            onValue(roomRef, (roomSnapshot) => {
+                const data = roomSnapshot.val();
                 if (data) {
-                    gameState = data;
-                } else {
-                    resetGame();
+                    roomState = data;
+                    // Garante que a estrutura interna não quebre se o nó de jogadores estiver vazio
+                    if (!roomState.players) roomState.players = {};
+                    if (!roomState.gameState) roomState.gameState = resetStateObject();
                 }
                 updateUI();
             });
         }
 
-        // 2. LÓGICA GRÁFICA E TABULEIRO
+        // 2. INTERFACE E TABULEIRO
         function createBoardDOM() {
             boardElement.innerHTML = '';
             for (let r = 0; r < ROWS; r++) {
@@ -293,35 +285,59 @@
         }
 
         function updateUI() {
+            const gState = roomState.gameState;
+            const players = roomState.players;
+
+            // 1. Atualiza visualmente as peças do tabuleiro
             for (let r = 0; r < ROWS; r++) {
                 for (let c = 0; c < COLS; c++) {
                     const cell = document.querySelector(`[data-row='${r}'][data-col='${c}']`);
                     if(!cell) return;
                     cell.className = 'cell';
-                    if (gameState.board[r][c] === 'red') cell.classList.add('red');
-                    if (gameState.board[r][c] === 'yellow') cell.classList.add('yellow');
+                    if (gState && gState.board && gState.board[r][c] === 'red') cell.classList.add('red');
+                    if (gState && gState.board && gState.board[r][c] === 'yellow') cell.classList.add('yellow');
                 }
             }
 
-            const p1Nick = currentPlayersState.player1?.nick || "Vermelho";
-            const p2Nick = currentPlayersState.player2?.nick || "Amarelo";
+            // 2. Atualiza os cards com os nomes dos jogadores
+            if (players && players.player1) {
+                p1Display.innerText = `🔴 Vermelho: ${players.player1.nick}`;
+                p1Display.classList.add('red-active');
+            } else {
+                p1Display.innerText = "🔴 Vermelho: Aguardando...";
+                p1Display.classList.remove('red-active');
+            }
 
-            if (gameState.winner) {
-                if (gameState.winner === 'draw') {
+            if (players && players.player2) {
+                p2Display.innerText = `🟡 Amarelo: ${players.player2.nick}`;
+                p2Display.classList.add('yellow-active');
+            } else {
+                p2Display.innerText = "🟡 Amarelo: Aguardando...";
+                p2Display.classList.remove('yellow-active');
+            }
+
+            // Oculta controle de reset para espectadores
+            resetBtn.style.display = (myRole === "spectator") ? 'none' : 'block';
+
+            // 3. Atualiza barra de Status do Turno / Vitória
+            const p1Nick = players?.player1?.nick || "Vermelho";
+            const p2Nick = players?.player2?.nick || "Amarelo";
+
+            if (gState && gState.winner) {
+                if (gState.winner === 'draw') {
                     statusElement.innerText = "Empate!";
                 } else {
-                    const winnerNick = gameState.winner === 'red' ? p1Nick : p2Nick;
+                    const winnerNick = gState.winner === 'red' ? p1Nick : p2Nick;
                     statusElement.innerText = `🏆 Fim de Jogo! ${winnerNick.toUpperCase()} venceu!`;
                 }
             } else {
-                // TRAVA VISUAL: Se não houver dois jogadores na sala ainda
-                if (!currentPlayersState.player1 || !currentPlayersState.player2) {
+                if (!players?.player1 || !players?.player2) {
                     statusElement.innerText = "Aguardando o segundo jogador entrar...";
                     return;
                 }
 
-                const activeNick = gameState.turn === 'red' ? p1Nick : p2Nick;
-                const isMyTurn = gameState.turn === myRole;
+                const activeNick = gState.turn === 'red' ? p1Nick : p2Nick;
+                const isMyTurn = gState.turn === myRole;
                 
                 if (myRole === "spectator") {
                     statusElement.innerText = `👀 Assistindo: Turno de ${activeNick.toUpperCase()}`;
@@ -332,15 +348,17 @@
         }
 
         function handleMove(col) {
-            // SÓ PERMITE JOGAR SE:
-            if (gameState.winner) return;                                            // 1. O jogo não acabou
-            if (!currentPlayersState.player1 || !currentPlayersState.player2) return; // 2. Ambos os jogadores estão na sala
-            if (!myRole || myRole === 'spectator') return;                           // 3. Você tem um papel válido e não é espectador
-            if (gameState.turn !== myRole) return;                                   // 4. É exatamente o seu turno
+            const gState = roomState.gameState;
+            const players = roomState.players;
+
+            if (!gState || gState.winner) return;
+            if (!players?.player1 || !players?.player2) return; 
+            if (!myRole || myRole === 'spectator') return;           
+            if (gState.turn !== myRole) return;                                   
 
             let row = -1;
             for (let r = ROWS - 1; r >= 0; r--) {
-                if (gameState.board[r][col] === '') {
+                if (gState.board[r][col] === '') {
                     row = r;
                     break;
                 }
@@ -348,21 +366,22 @@
 
             if (row === -1) return;
 
-            gameState.board[row][col] = gameState.turn;
+            gState.board[row][col] = gState.turn;
 
-            if (checkWinner(row, col)) {
-                gameState.winner = gameState.turn;
-            } else if (gameState.board.every(row => row.every(cell => cell !== ''))) {
-                gameState.winner = 'draw';
+            if (checkWinner(row, col, gState.board)) {
+                gState.winner = gState.turn;
+            } else if (gState.board.every(row => row.every(cell => cell !== ''))) {
+                gState.winner = 'draw';
             } else {
-                gameState.turn = gameState.turn === 'red' ? 'yellow' : 'red';
+                gState.turn = gState.turn === 'red' ? 'yellow' : 'red';
             }
 
-            set(gameRef, gameState);
+            // Atualiza o nó completo mantendo os jogadores intactos
+            set(ref(db, 'game_room/gameState'), gState);
         }
 
-        function checkWinner(r, c) {
-            const player = gameState.board[r][c];
+        function checkWinner(r, c, board) {
+            const player = board[r][c];
             const directions = [
                 [[0, 1], [0, -1]], [[1, 0], [-1, 0]],
                 [[1, 1], [-1, -1]], [[1, -1], [-1, 1]]
@@ -370,11 +389,11 @@
             for (let [d1, d2] of directions) {
                 let count = 1;
                 let row = r + d1[0], col = c + d1[1];
-                while (row >= 0 && row < ROWS && col >= 0 && col < COLS && gameState.board[row][col] === player) {
+                while (row >= 0 && row < ROWS && col >= 0 && col < COLS && board[row][col] === player) {
                     count++; row += d1[0]; col += d1[1];
                 }
                 row = r + d2[0]; col = c + d2[1];
-                while (row >= 0 && row < ROWS && col >= 0 && col < COLS && gameState.board[row][col] === player) {
+                while (row >= 0 && row < ROWS && col >= 0 && col < COLS && board[row][col] === player) {
                     count++; row += d2[0]; col += d2[1];
                 }
                 if (count >= 4) return true;
@@ -382,27 +401,30 @@
             return false;
         }
 
-        function resetGame() {
-            if(myRole === 'spectator') return;
-            const initialValues = {
+        function resetStateObject() {
+            return {
                 board: Array(ROWS).fill(null).map(() => Array(COLS).fill('')),
                 turn: 'red',
                 winner: ''
             };
-            set(gameRef, initialValues);
+        }
+
+        function triggerReset() {
+            if(myRole === 'spectator') return;
+            set(ref(db, 'game_room/gameState'), resetStateObject());
         }
 
         function leaveGame() {
             if (myRole === 'red') {
-                remove(ref(db, 'players/player1'));
+                remove(ref(db, 'game_room/players/player1'));
             } else if (myRole === 'yellow') {
-                remove(ref(db, 'players/player2'));
+                remove(ref(db, 'game_room/players/player2'));
             }
-            resetGame();
+            triggerReset();
             window.location.reload();
         }
 
-        resetBtn.addEventListener('click', resetGame);
+        resetBtn.addEventListener('click', triggerReset);
         leaveBtn.addEventListener('click', leaveGame);
         
         createBoardDOM();
