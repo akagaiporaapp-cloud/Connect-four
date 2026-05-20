@@ -53,7 +53,7 @@
 
         #login-screen button:hover { background-color: #0052a3; }
 
-        /* Área do Jogo (escondida no início) */
+        /* Área do Jogo */
         #game-screen {
             display: none;
             flex-direction: column;
@@ -84,6 +84,8 @@
             font-weight: bold;
             margin-bottom: 20px;
             color: #555;
+            text-align: center;
+            min-height: 1.5em;
         }
 
         #board {
@@ -135,18 +137,15 @@
 </head>
 <body>
 
-    <!-- TELA DE ENTRADA -->
     <div id="login-screen">
         <h2>Entrar no Connect Four</h2>
         <input type="text" id="nick-input" placeholder="Digite seu Nickname" maxlength="12">
         <button id="enter-btn">Entrar no Jogo</button>
     </div>
 
-    <!-- TELA DO JOGO -->
     <div id="game-screen">
         <h1>Connect Four</h1>
         
-        <!-- Mostra quem está jogando e os Nicks -->
         <div id="players-panel">
             <div id="p1-display" class="player-card">Vermelho: Aguardando...</div>
             <div id="p2-display" class="player-card">Amarelo: Aguardando...</div>
@@ -163,7 +162,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, onValue, onDisconnect, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, onValue, onDisconnect, remove, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         // Sua configuração do Firebase
         const firebaseConfig = {
@@ -176,7 +175,6 @@
             appId: "1:5310677394:web:4a81fcd9399bad1abd414b"
         };
 
-        // Inicializa o Firebase
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         
@@ -186,7 +184,6 @@
         const ROWS = 6;
         const COLS = 7;
         
-        // Elementos DOM
         const loginScreen = document.getElementById('login-screen');
         const gameScreen = document.getElementById('game-screen');
         const nickInput = document.getElementById('nick-input');
@@ -198,8 +195,9 @@
         const resetBtn = document.getElementById('reset-btn');
         const leaveBtn = document.getElementById('leave-btn');
 
-        let myRole = ""; // "red", "yellow" ou "spectator"
+        let myRole = ""; 
         let myNick = "";
+        let currentPlayersState = {};
         const myPlayerId = Math.random().toString(36).substring(2, 9);
 
         let gameState = {
@@ -208,7 +206,6 @@
             winner: ''
         };
 
-        // Evento de clique para entrar no jogo
         enterBtn.addEventListener('click', () => {
             const nick = nickInput.value.trim();
             if (!nick) {
@@ -219,55 +216,64 @@
             loginScreen.style.display = 'none';
             gameScreen.style.display = 'flex';
             
-            // Inicia o fluxo de escuta de jogadores apenas após o login
             setupPlayersPresence();
         });
 
-        // 1. GERENCIAMENTO DE PRESENÇA E ASSENTOS
-        function setupPlayersPresence() {
-            onValue(playersRef, (snapshot) => {
-                const players = snapshot.val() || {};
-                
-                // Se eu acabei de logar e não tenho papel definido
-                if (!myRole) {
-                    if (!players.player1) {
-                        myRole = "red";
-                        set(ref(db, 'players/player1'), { id: myPlayerId, nick: myNick });
-                        onDisconnect(ref(db, 'players/player1')).remove(); 
-                    } else if (!players.player2) {
-                        myRole = "yellow";
-                        set(ref(db, 'players/player2'), { id: myPlayerId, nick: myNick });
-                        onDisconnect(ref(db, 'players/player2')).remove();
-                    } else {
-                        myRole = "spectator";
-                    }
-                }
+        // 1. GERENCIAMENTO DE PRESENÇA COM TRAVA DE SEGURANÇA
+        async function setupPlayersPresence() {
+            // Faz uma leitura única inicial para garantir assento correto antes de ouvir o banco continuamente
+            const snapshot = await get(playersRef);
+            const players = snapshot.val() || {};
 
-                // Atualiza os nomes exibidos no topo do painel
-                if (players.player1) {
-                    p1Display.innerText = `🔴 Vermelho: ${players.player1.nick}`;
+            if (!players.player1) {
+                myRole = "red";
+                await set(ref(db, 'players/player1'), { id: myPlayerId, nick: myNick });
+                onDisconnect(ref(db, 'players/player1')).remove(); 
+            } else if (!players.player2) {
+                myRole = "yellow";
+                await set(ref(db, 'players/player2'), { id: myPlayerId, nick: myNick });
+                onDisconnect(ref(db, 'players/player2')).remove();
+            } else {
+                myRole = "spectator";
+            }
+
+            // Ouve as atualizações contínuas de jogadores e do estado do jogo
+            onValue(playersRef, (playerSnapshot) => {
+                currentPlayersState = playerSnapshot.val() || {};
+                
+                if (currentPlayersState.player1) {
+                    p1Display.innerText = `🔴 Vermelho: ${currentPlayersState.player1.nick}`;
                     p1Display.classList.add('red-active');
                 } else {
                     p1Display.innerText = "🔴 Vermelho: Aguardando...";
                     p1Display.classList.remove('red-active');
                 }
 
-                if (players.player2) {
-                    p2Display.innerText = `🟡 Amarelo: ${players.player2.nick}`;
+                if (currentPlayersState.player2) {
+                    p2Display.innerText = `🟡 Amarelo: ${currentPlayersState.player2.nick}`;
                     p2Display.classList.add('yellow-active');
                 } else {
                     p2Display.innerText = "🟡 Amarelo: Aguardando...";
                     p2Display.classList.remove('yellow-active');
                 }
 
-                // Se você for espectador, esconde o botão de reset
                 if (myRole === "spectator") {
                     resetBtn.style.display = 'none';
                 } else {
                     resetBtn.style.display = 'block';
                 }
                 
-                updateUI(players);
+                updateUI();
+            });
+
+            onValue(gameRef, (gameSnapshot) => {
+                const data = gameSnapshot.val();
+                if (data) {
+                    gameState = data;
+                } else {
+                    resetGame();
+                }
+                updateUI();
             });
         }
 
@@ -286,7 +292,7 @@
             }
         }
 
-        function updateUI(currentPlayers = {}) {
+        function updateUI() {
             for (let r = 0; r < ROWS; r++) {
                 for (let c = 0; c < COLS; c++) {
                     const cell = document.querySelector(`[data-row='${r}'][data-col='${c}']`);
@@ -297,9 +303,8 @@
                 }
             }
 
-            // Exibe de forma inteligente quem joga ou quem ganhou baseado nos Nicks salvos
-            const p1Nick = currentPlayers.player1?.nick || "Vermelho";
-            const p2Nick = currentPlayers.player2?.nick || "Amarelo";
+            const p1Nick = currentPlayersState.player1?.nick || "Vermelho";
+            const p2Nick = currentPlayersState.player2?.nick || "Amarelo";
 
             if (gameState.winner) {
                 if (gameState.winner === 'draw') {
@@ -309,6 +314,12 @@
                     statusElement.innerText = `🏆 Fim de Jogo! ${winnerNick.toUpperCase()} venceu!`;
                 }
             } else {
+                // TRAVA VISUAL: Se não houver dois jogadores na sala ainda
+                if (!currentPlayersState.player1 || !currentPlayersState.player2) {
+                    statusElement.innerText = "Aguardando o segundo jogador entrar...";
+                    return;
+                }
+
                 const activeNick = gameState.turn === 'red' ? p1Nick : p2Nick;
                 const isMyTurn = gameState.turn === myRole;
                 
@@ -321,9 +332,11 @@
         }
 
         function handleMove(col) {
-            if (gameState.winner) return;
-            if (myRole === 'spectator') return;
-            if (gameState.turn !== myRole) return;
+            // SÓ PERMITE JOGAR SE:
+            if (gameState.winner) return;                                            // 1. O jogo não acabou
+            if (!currentPlayersState.player1 || !currentPlayersState.player2) return; // 2. Ambos os jogadores estão na sala
+            if (!myRole || myRole === 'spectator') return;                           // 3. Você tem um papel válido e não é espectador
+            if (gameState.turn !== myRole) return;                                   // 4. É exatamente o seu turno
 
             let row = -1;
             for (let r = ROWS - 1; r >= 0; r--) {
@@ -369,17 +382,6 @@
             return false;
         }
 
-        // Ouve atualizações do tabuleiro
-        onValue(gameRef, (snapshot) => {
-            const data = snapshot.val();
-            if (data) {
-                gameState = data;
-            } else {
-                resetGame();
-            }
-            updateUI();
-        });
-
         function resetGame() {
             if(myRole === 'spectator') return;
             const initialValues = {
@@ -390,18 +392,13 @@
             set(gameRef, initialValues);
         }
 
-        // 3. ABANDONAR PARTIDA
         function leaveGame() {
             if (myRole === 'red') {
                 remove(ref(db, 'players/player1'));
             } else if (myRole === 'yellow') {
                 remove(ref(db, 'players/player2'));
             }
-            
-            // Força o reset do tabuleiro já que um jogador saiu
             resetGame();
-            
-            // Recarrega a página para voltar à tela de login limpa
             window.location.reload();
         }
 
