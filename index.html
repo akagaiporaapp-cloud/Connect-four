@@ -1,655 +1,248 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>Connect Four | Realtime Matchmaking</title>
-<style>
-  * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-    -webkit-tap-highlight-color: transparent;
-  }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect Four Multiplayer - Firebase</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #eef2f3;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
 
-  body {
-    height: 100vh;
-    width: 100vw;
-    overflow: hidden;
-    position: fixed;
-    background: radial-gradient(circle at 20% 30%, #0a0f2a, #030617);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    font-family: 'Segoe UI', 'Poppins', system-ui, -apple-system, BlinkMacSystemFont, 'Roboto', sans-serif;
-  }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
 
-  .game-container {
-    width: 100%;
-    height: 100%;
-    max-width: 550px;
-    background: rgba(15, 25, 45, 0.6);
-    backdrop-filter: blur(14px);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding: 12px 16px 16px 16px;
-    position: relative;
-    z-index: 2;
-  }
+        #status {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #555;
+        }
 
-  @media (max-height: 680px) {
-    .game-container { padding: 8px 14px 12px 14px; }
-  }
+        #board {
+            background-color: #0066cc;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            display: grid;
+            grid-template-columns: repeat(7, 60px);
+            grid-gap: 10px;
+            cursor: pointer;
+        }
 
-  .title {
-    text-align: center;
-    font-size: 1.6rem;
-    background: linear-gradient(135deg, #FFE6B0, #FFB347, #FF6A88);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    letter-spacing: -0.3px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    margin-bottom: 6px;
-    flex-shrink: 0;
-  }
+        .cell {
+            width: 60px;
+            height: 60px;
+            background-color: #fff;
+            border-radius: 50%;
+            box-shadow: inset 0 4px 6px rgba(0,0,0,0.2);
+            transition: background-color 0.2s ease;
+        }
 
-  .title span {
-    font-size: 1.4rem;
-    filter: drop-shadow(0 0 3px gold);
-  }
+        .cell.red { background-color: #ff4136; }
+        .cell.yellow { background-color: #ffdc00; }
 
-  .status {
-    text-align: center;
-    background: rgba(0, 0, 0, 0.5);
-    padding: 8px 8px;
-    margin: 6px 0 12px 0;
-    border-radius: 40px;
-    font-weight: 600;
-    font-size: 0.9rem;
-    backdrop-filter: blur(4px);
-    color: #F1F5F9;
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.3), 0 2px 5px rgba(0,0,0,0.2);
-    flex-shrink: 0;
-  }
+        #reset-btn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 1rem;
+            background-color: #2ecc71;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
 
-  .board {
-    background: linear-gradient(145deg, #1E3A8A, #0F2B6D);
-    padding: 12px 10px;
-    border-radius: 36px;
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 8px;
-    box-shadow: inset 0 2px 8px rgba(0,0,0,0.5), 0 12px 20px -6px black;
-    border: 1px solid #3b82f670;
-    margin-bottom: 8px;
-    flex-shrink: 0;
-  }
-
-  .cell {
-    width: 100%;
-    aspect-ratio: 1 / 1;
-    border-radius: 50%;
-    background: #0B1120;
-    cursor: pointer;
-    transition: 0.18s ease;
-    box-shadow: inset 0 0 0 2px rgba(0,0,0,0.6), 0 2px 5px rgba(0,0,0,0.4);
-    transform: scale(1);
-  }
-
-  .cell:active { transform: scale(0.96); }
-
-  @keyframes dropGlow {
-    0% { transform: translateY(-280px) scale(0.5); opacity: 0; }
-    55% { transform: translateY(6px) scale(1.02); }
-    100% { transform: translateY(0) scale(1); opacity: 1; }
-  }
-
-  .cell.red, .cell.yellow {
-    animation: dropGlow 0.32s cubic-bezier(0.34, 1.2, 0.64, 1) forwards;
-  }
-
-  .cell.red {
-    background: radial-gradient(circle at 35% 35%, #FF8181, #DC2626);
-    box-shadow: 0 0 12px #ef4444cc, inset 0 1px 2px rgba(255,255,200,0.7);
-  }
-
-  .cell.yellow {
-    background: radial-gradient(circle at 35% 35%, #FFF0A5, #F59E0B);
-    box-shadow: 0 0 12px #fbbf24cc, inset 0 1px 2px rgba(255,250,210,0.9);
-  }
-
-  .win-glow { animation: winPulse 0.5s infinite alternate; }
-
-  @keyframes winPulse {
-    0% { box-shadow: 0 0 4px 2px gold, 0 0 0px 0px rgba(255,215,0,0.5); }
-    100% { box-shadow: 0 0 18px 6px #FFD966, 0 0 0px 4px rgba(255,200,0,0.8); }
-  }
-
-  .controls {
-    margin-top: 8px;
-    display: flex;
-    gap: 12px;
-    flex-shrink: 0;
-  }
-
-  button {
-    flex: 1;
-    border: none;
-    padding: 10px 6px;
-    border-radius: 44px;
-    font-weight: bold;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    background: #1E293B;
-    color: #F0F9FF;
-    letter-spacing: 0.3px;
-    box-shadow: 0 3px 0 #0F172A;
-    transform: translateY(-1px);
-  }
-
-  button:active {
-    transform: translateY(2px);
-    box-shadow: 0 1px 0 #0F172A;
-  }
-
-  .reset-btn {
-    background: linear-gradient(95deg, #F97316, #EA580C);
-    box-shadow: 0 3px 0 #9A3412;
-  }
-
-  .fullreset-btn {
-    background: linear-gradient(95deg, #475569, #334155);
-    box-shadow: 0 3px 0 #1E293B;
-  }
-
-  .scoreboard {
-    display: flex;
-    gap: 12px;
-    margin-top: 12px;
-    flex-shrink: 0;
-  }
-
-  .score {
-    flex: 1;
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(6px);
-    padding: 8px 4px;
-    border-radius: 24px;
-    text-align: center;
-    border: 1px solid rgba(255,255,240,0.2);
-  }
-
-  .score h3 {
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    margin-bottom: 2px;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-  }
-
-  .player-name {
-    font-size: 0.85rem;
-    font-weight: 600;
-    margin-bottom: 6px;
-    color: #94A3B8;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    padding: 0 4px;
-  }
-
-  .score:first-child h3 { color: #FF6B6B; }
-  .score:last-child h3 { color: #FCD34D; }
-
-  .score p {
-    font-size: 1.5rem;
-    font-weight: 800;
-    background: linear-gradient(135deg, #FDE68A, #FCD34D);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    line-height: 1.2;
-  }
-
-  footer {
-    font-size: 0.55rem;
-    text-align: center;
-    margin-top: 8px;
-    color: #94a3b8;
-    opacity: 0.65;
-    flex-shrink: 0;
-  }
-
-  .name-modal {
-    position: fixed;
-    top: 0; left: 0; width: 100vw; height: 100vh;
-    background: rgba(3, 6, 23, 0.9);
-    backdrop-filter: blur(20px);
-    z-index: 999;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 20px;
-    transition: opacity 0.3s ease;
-  }
-
-  .modal-content {
-    background: #0F172A;
-    border: 1px solid #3b82f640;
-    border-radius: 28px;
-    padding: 30px 24px;
-    width: 100%;
-    max-width: 360px;
-    text-align: center;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-  }
-
-  .modal-content h2 {
-    color: #F1F5F9;
-    font-size: 1.4rem;
-    margin-bottom: 16px;
-    background: linear-gradient(135deg, #FFE6B0, #FFB347);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-
-  .modal-content input {
-    width: 100%;
-    padding: 14px 20px;
-    border-radius: 40px;
-    border: 1px solid #334155;
-    background: #1E293B;
-    color: #F8FAFC;
-    font-size: 1rem;
-    font-weight: 600;
-    text-align: center;
-    margin-bottom: 20px;
-    outline: none;
-  }
-
-  .modal-content input:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
-  }
-
-  .modal-content button {
-    width: 100%;
-    background: linear-gradient(95deg, #3b82f6, #2563eb);
-    box-shadow: 0 3px 0 #1d4ed8;
-    padding: 12px;
-    font-size: 0.95rem;
-  }
-
-  @media (max-height: 600px) {
-    .title { font-size: 1.3rem; margin-bottom: 2px; }
-    .status { font-size: 0.75rem; padding: 5px 8px; margin: 4px 0 8px 0; }
-    .board { padding: 8px 8px; gap: 6px; border-radius: 28px; }
-    .score p { font-size: 1.2rem; }
-    .score h3 { font-size: 0.6rem; }
-    button { padding: 7px 4px; font-size: 0.75rem; }
-    footer { margin-top: 5px; font-size: 0.5rem; }
-    .controls { gap: 8px; }
-  }
-</style>
+        #reset-btn:hover { background-color: #27ae60; }
+    </style>
 </head>
 <body>
 
-<div class="name-modal" id="nameModal">
-  <div class="modal-content">
-    <h2>Qual o seu nome?</h2>
-    <input type="text" id="usernameInput" placeholder="Ex: Player 1" maxlength="12" autocomplete="off" />
-    <button id="joinGameBtn">Procurar Partida ⚡</button>
-  </div>
-</div>
+    <h1>Connect Four</h1>
+    <div id="status">Conectando ao Firebase...</div>
+    <div id="board"></div>
+    <button id="reset-btn">Reiniciar Jogo</button>
 
-<div class="game-container">
-  <div class="title">
-    <span>⚡</span> CONNECT FOUR <span>✨</span>
-  </div>
-
-  <div class="status" id="status">
-    Aguardando identificação...
-  </div>
-
-  <div class="board" id="board"></div>
-
-  <div class="controls">
-    <button class="reset-btn" id="resetGameBtn">⟳ Partida</button>
-    <button class="fullreset-btn" id="fullResetBtn">🗑️ Zerar tudo</button>
-  </div>
-
-  <div class="scoreboard">
-    <div class="score">
-      <h3>🔴 VERMELHO</h3>
-      <div class="player-name" id="nameRef-red">Conectando...</div>
-      <p id="redScore">0</p>
-    </div>
-    <div class="score">
-      <h3>🟡 AMARELO</h3>
-      <div class="player-name" id="nameRef-yellow">Conectando...</div>
-      <p id="yellowScore">0</p>
-    </div>
-  </div>
-  <footer id="room-footer">Buscando servidor...</footer>
-</div>
-
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getDatabase, ref, set, onValue, update, runTransaction, onDisconnect, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyCC26_ayjIvJmPoneYzNmMj3OwCXRbc_-g",
-    authDomain: "conect-four-2f029.firebaseapp.com",
-    projectId: "conect-four-2f029",
-    storageBucket: "conect-four-2f029.firebasestorage.app",
-    messagingSenderId: "5310677394",
-    appId: "1:5310677394:web:4a81fcd9399bad1abd414b"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const db = getDatabase(app);
-
-  const ROWS = 6;
-  const COLS = 7;
-  
-  let myRole = null; 
-  let myNickname = "Anônimo";
-  let roomName = null;
-  let roomRef = null;
-  let gameState = {};
-
-  const boardElement = document.getElementById('board');
-  const statusText = document.getElementById('status');
-  const redScoreElem = document.getElementById('redScore');
-  const yellowScoreElem = document.getElementById('yellowScore');
-  const nameRefRed = document.getElementById('nameRef-red');
-  const nameRefYellow = document.getElementById('nameRef-yellow');
-
-  document.getElementById('joinGameBtn').addEventListener('click', () => {
-    const input = document.getElementById('usernameInput');
-    let value = input.value.trim();
-    if(value === "") value = "Jogador " + Math.floor(Math.random() * 100);
-    myNickname = value.replace(/[.<>$#[\]]/g, ""); 
-    
-    document.getElementById('nameModal').style.opacity = '0';
-    setTimeout(() => {
-      document.getElementById('nameModal').style.display = 'none';
-    }, 300);
-
-    statusText.innerHTML = '🔍 Conectando ao pareamento rápido...';
-    startMatchmaking();
-  });
-
-  document.getElementById('usernameInput').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') document.getElementById('joinGameBtn').click();
-  });
-
-  // ========== LÓGICA DE FILA RESILIENTE ==========
-  function startMatchmaking() {
-    const queueRef = ref(db, 'queue');
-
-    // Forçamos uma leitura direta para evitar conflito de cache inicial da transação
-    get(queueRef).then((snapshot) => {
-      if (!snapshot.exists() || snapshot.val() === "") {
-        // FILA VAZIA: Eu sou o Player 1 (Vermelho), crio a sala e me coloco na fila
-        roomName = 'room_' + Math.random().toString(36).substring(2, 9);
-        myRole = 'red';
-
-        // Garante que se eu fechar a aba antes de alguém entrar, limpo a fila global
-        onDisconnect(queueRef).set("");
-
-        set(queueRef, roomName).then(() => {
-          connectToRoom();
-        });
-      } else {
-        // FILA OCUPADA: Capturo o ID da sala criada pelo Player 1 e limpo a fila para os próximos
-        roomName = snapshot.val();
-        myRole = 'yellow';
-
-        set(queueRef, "").then(() => {
-          connectToRoom();
-        });
-      }
-    }).catch((err) => {
-      console.error(err);
-      // Fallback automático em loop se houver oscilação de rede
-      setTimeout(startMatchmaking, 500);
-    });
-  }
-
-  function connectToRoom() {
-    roomRef = ref(db, `rooms/${roomName}`);
-    document.getElementById('room-footer').innerText = `ID da Partida: ${roomName}`;
-
-    // Inicialização forçada e completa do nó de dados da sala
-    if (myRole === 'red') {
-      const initialPayload = {
-        board: Array(ROWS).fill(null).map(() => Array(COLS).fill(null)),
-        currentPlayer: 'red',
-        gameOver: false,
-        winner: null,
-        redScore: 0,
-        yellowScore: 0,
-        players: { red: "active", yellow: "" },
-        playerNames: { red: `${myNickname} (Você)`, yellow: "Procurando..." }
-      };
-
-      set(roomRef, initialPayload).then(() => {
-        onDisconnect(ref(db, `rooms/${roomName}/players/red`)).set("");
-        onDisconnect(ref(db, `rooms/${roomName}/playerNames/red`)).set("Desconectado");
-        startListening();
-      });
-    } else {
-      // Jogador Amarelo atualiza os seus respectivos slots
-      update(ref(db, `rooms/${roomName}/players`), { yellow: "active" });
-      update(ref(db, `rooms/${roomName}/playerNames`), { yellow: `${myNickname} (Você)` });
-      
-      onDisconnect(ref(db, `rooms/${roomName}/players/yellow`)).set("");
-      onDisconnect(ref(db, `rooms/${roomName}/playerNames/yellow`)).set("Desconectado");
-      
-      startListening();
-    }
-  }
-
-  function startListening() {
-    onValue(roomRef, (snapshot) => {
-      const data = snapshot.val();
-      if (!data || !data.board) return;
-      gameState = data;
-      renderBoard();
-      updateUI();
-    });
-  }
-
-  function renderBoard() {
-    boardElement.innerHTML = '';
-    for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
-        const cell = document.createElement('div');
-        cell.classList.add('cell');
-        const value = gameState.board[row][col];
-        if (value === 'red') cell.classList.add('red');
-        else if (value === 'yellow') cell.classList.add('yellow');
+    <!-- Usamos type="module" para permitir o uso de 'import' nativo no navegador -->
+    <script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        // SDK adicional necessário para utilizar a Realtime Database
+        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
         
-        cell.addEventListener('click', () => dropPiece(col));
-        boardElement.appendChild(cell);
-      }
-    }
-  }
+        // TODO: Add SDKs for Firebase products that you want to use
+        // https://firebase.google.com/docs/web/setup#available-libraries
 
-  function updateUI() {
-    redScoreElem.innerText = gameState.redScore || 0;
-    yellowScoreElem.innerText = gameState.yellowScore || 0;
+        // Your web app's Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyCC26_ayjIvJmPoneYzNmMj3OwCXRbc_-g",
+            authDomain: "conect-four-2f029.firebaseapp.com",
+            databaseURL: "https://conect-four-2f029-default-rtdb.firebaseio.com",
+            projectId: "conect-four-2f029",
+            storageBucket: "conect-four-2f029.firebasestorage.app",
+            messagingSenderId: "5310677394",
+            appId: "1:5310677394:web:4a81fcd9399bad1abd414b"
+        };
 
-    const names = gameState.playerNames || {};
-    let redDisplayName = names.red || "Conectando...";
-    let yellowDisplayName = names.yellow || "Conectando...";
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        
+        // Inicializa a Realtime Database do seu app
+        const db = getDatabase(app);
+        const gameRef = ref(db, 'game_state');
 
-    if(myRole === 'yellow' && redDisplayName.includes('(Você)')) redDisplayName = redDisplayName.replace(' (Você)', '');
-    if(myRole === 'red' && yellowDisplayName.includes('(Você)')) yellowDisplayName = yellowDisplayName.replace(' (Você)', '');
+        // Configurações do Tabuleiro (6 linhas x 7 colunas)
+        const ROWS = 6;
+        const COLS = 7;
+        const boardElement = document.getElementById('board');
+        const statusElement = document.getElementById('status');
+        const resetBtn = document.getElementById('reset-btn');
 
-    nameRefRed.innerText = redDisplayName;
-    nameRefYellow.innerText = yellowDisplayName;
+        // Objeto que controlará o estado do jogo localmente antes de sincronizar
+        let gameState = {
+            board: Array(ROWS).fill(null).map(() => Array(COLS).fill('')),
+            turn: 'red', // 'red' ou 'yellow'
+            winner: ''   // 'red', 'yellow', 'draw' ou ''
+        };
 
-    const activePlayers = gameState.players || {};
-    if (!activePlayers.red || activePlayers.red !== "active" || !activePlayers.yellow || activePlayers.yellow !== "active") {
-      statusText.innerHTML = '⏳ Aguardando oponente entrar na fila...';
-      return;
-    }
-
-    if (gameState.gameOver) {
-      if (gameState.winner === 'draw') {
-        statusText.innerHTML = '🤝 EMPATE! Placar mantido 🤝';
-      } else {
-        const winnerKey = gameState.winner;
-        let winnerName = names[winnerKey] ? names[winnerKey].replace(' (Você)', '') : winnerKey.toUpperCase();
-        statusText.innerHTML = `🏆 ${winnerName.toUpperCase()} VENCEU! 🏆`;
-      }
-      return;
-    }
-
-    if (gameState.currentPlayer === 'red') {
-      statusText.innerHTML = myRole === 'red' ? '🔴 Sua vez! (Vermelho)' : `🔴 Vez de: ${redDisplayName.replace(' (Você)', '')}`;
-    } else {
-      statusText.innerHTML = myRole === 'yellow' ? '🟡 Sua vez! (Amarelo)' : `🟡 Vez de: ${yellowDisplayName.replace(' (Você)', '')}`;
-    }
-  }
-
-  function validateMove(oldBoard, newBoard, col, player) {
-    let diffCount = 0;
-    let expectedRow = -1;
-
-    for (let r = ROWS - 1; r >= 0; r--) {
-      if (oldBoard[r][col] === null) {
-        expectedRow = r;
-        break;
-      }
-    }
-
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        if (oldBoard[r][c] !== newBoard[r][c]) {
-          diffCount++;
-          if (r !== expectedRow || c !== col || newBoard[r][c] !== player) {
-            return false; 
-          }
+        // Cria visualmente o tabuleiro na tela
+        function createBoardDOM() {
+            boardElement.innerHTML = '';
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('cell');
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
+                    cell.addEventListener('click', () => handleMove(c));
+                    boardElement.appendChild(cell);
+                }
+            }
         }
-      }
-    }
-    return diffCount === 1; 
-  }
 
-  function dropPiece(col) {
-    if (gameState.gameOver || myRole === 'spectator') return;
-    if (gameState.currentPlayer !== myRole) return; 
-    if (!gameState.players || gameState.players.red !== "active" || gameState.players.yellow !== "active") return; 
+        // Atualiza o HTML e CSS sempre que houver mudança de dados no Firebase
+        function updateUI() {
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const cell = document.querySelector(`[data-row='${r}'][data-col='${c}']`);
+                    cell.className = 'cell'; // Reseta classes antigas
+                    if (gameState.board[r][c] === 'red') cell.classList.add('red');
+                    if (gameState.board[r][c] === 'yellow') cell.classList.add('yellow');
+                }
+            }
 
-    let targetRow = -1;
-    for (let row = ROWS - 1; row >= 0; row--) {
-      if (gameState.board[row][col] === null) {
-        targetRow = row;
-        break;
-      }
-    }
-    
-    if (targetRow === -1) return; 
+            // Atualiza o texto do Status
+            if (gameState.winner) {
+                if (gameState.winner === 'draw') {
+                    statusElement.innerText = "Empate de peões!";
+                } else {
+                    statusElement.innerText = `Vitória! O jogador ${gameState.winner.toUpperCase()} ganhou!`;
+                }
+            } else {
+                statusElement.innerText = `Turno do jogador: ${gameState.turn.toUpperCase()}`;
+            }
+        }
 
-    const updatedBoard = JSON.parse(JSON.stringify(gameState.board));
-    updatedBoard[targetRow][col] = myRole;
+        // Gerencia o clique em uma coluna do tabuleiro
+        function handleMove(col) {
+            if (gameState.winner) return; // Se o jogo já acabou, impede jogadas
 
-    if (!validateMove(gameState.board, updatedBoard, col, myRole)) return;
+            // Lógica física: Encontra a primeira linha vazia de baixo para cima
+            let row = -1;
+            for (let r = ROWS - 1; r >= 0; r--) {
+                if (gameState.board[r][col] === '') {
+                    row = r;
+                    break;
+                }
+            }
 
-    let updates = {};
-    updates[`rooms/${roomName}/board`] = updatedBoard;
+            // Se a coluna escolhida já estiver cheia, ignora o clique
+            if (row === -1) return;
 
-    const winningCells = getWinningCells(updatedBoard, targetRow, col, myRole);
-    if (winningCells.length >= 4) {
-      updates[`rooms/${roomName}/gameOver`] = true;
-      updates[`rooms/${roomName}/winner`] = myRole;
-      updates[`rooms/${roomName}/${myRole}Score`] = (gameState[`${myRole}Score`] || 0) + 1;
-    } else if (isBoardFull(updatedBoard)) {
-      updates[`rooms/${roomName}/gameOver`] = true;
-      updates[`rooms/${roomName}/winner`] = 'draw';
-    } else {
-      updates[`rooms/${roomName}/currentPlayer`] = (myRole === 'red') ? 'yellow' : 'red';
-    }
+            // Insere a peça do jogador atual na matriz
+            gameState.board[row][col] = gameState.turn;
 
-    update(ref(db), updates);
-  }
+            // Valida se esta jogada resultou em vitória ou empate
+            if (checkWinner(row, col)) {
+                gameState.winner = gameState.turn;
+            } else if (gameState.board.every(row => row.every(cell => cell !== ''))) {
+                gameState.winner = 'draw';
+            } else {
+                // Passa o turno para o próximo jogador
+                gameState.turn = gameState.turn === 'red' ? 'yellow' : 'red';
+            }
 
-  function countDirection(currentBoard, row, col, rowDir, colDir, player) {
-    let total = 0;
-    let r = row + rowDir;
-    let c = col + colDir;
-    while (r >= 0 && r < ROWS && c >= 0 && c < COLS && currentBoard[r][c] === player) {
-      total++;
-      r += rowDir;
-      c += colDir;
-    }
-    return total;
-  }
+            // Envia o novo estado do jogo modificado para a sua Realtime Database
+            set(gameRef, gameState);
+        }
 
-  function getWinningCells(currentBoard, row, col, player) {
-    const directions = [
-      { dr: 0, dc: 1 }, { dr: 0, dc: -1 },
-      { dr: 1, dc: 0 }, { dr: -1, dc: 0 },
-      { dr: 1, dc: 1 }, { dr: -1, dc: -1 },
-      { dr: 1, dc: -1 }, { dr: -1, dc: 1 }
-    ];
-    
-    for (let i = 0; i < directions.length; i += 2) {
-      const dir1 = directions[i];
-      const dir2 = directions[i+1];
-      const count1 = countDirection(currentBoard, row, col, dir1.dr, dir1.dc, player);
-      const count2 = countDirection(currentBoard, row, col, dir2.dr, dir2.dc, player);
-      if (count1 + count2 + 1 >= 4) {
-        return ['win', 'win', 'win', 'win'];
-      }
-    }
-    return [];
-  }
+        // Função matemática para validar se existem 4 peças iguais conectadas em qualquer direção
+        function checkWinner(r, c) {
+            const player = gameState.board[r][c];
+            const directions = [
+                [[0, 1], [0, -1]],  // Horizontal (direita, esquerda)
+                [[1, 0], [-1, 0]],  // Vertical (baixo, cima)
+                [[1, 1], [-1, -1]], // Diagonal Principal (\)
+                [[1, -1], [-1, 1]]  // Diagonal Secundária (/)
+            ];
 
-  function isBoardFull(currentBoard) {
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        if (currentBoard[r][c] === null) return false;
-      }
-    }
-    return true;
-  }
+            for (let [d1, d2] of directions) {
+                let count = 1;
+                
+                // Conta peças iguais na primeira direção
+                let row = r + d1[0], col = c + d1[1];
+                while (row >= 0 && row < ROWS && col >= 0 && col < COLS && gameState.board[row][col] === player) {
+                    count++; row += d1[0]; col += d1[1];
+                }
+                
+                // Conta peças iguais na direção oposta
+                row = r + d2[0]; col = c + d2[1];
+                while (row >= 0 && row < ROWS && col >= 0 && col < COLS && gameState.board[row][col] === player) {
+                    count++; row += d2[0]; col += d2[1];
+                }
+                
+                if (count >= 4) return true;
+            }
+            return false;
+        }
 
-  function resetDatabaseState(clearScores = false) {
-    if (myRole === 'spectator' || (gameState.board && gameState.gameOver === false)) return; 
-    
-    const freshState = {
-      board: Array(ROWS).fill(null).map(() => Array(COLS).fill(null)),
-      currentPlayer: 'red',
-      gameOver: false,
-      winner: null,
-      redScore: clearScores ? 0 : gameState.redScore || 0,
-      yellowScore: clearScores ? 0 : gameState.yellowScore || 0,
-    };
+        // Ouve atualizações em tempo real vindas do seu Firebase
+        onValue(gameRef, (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                gameState = data;
+            } else {
+                // Se a base de dados estiver vazia, inicia o estado limpo do jogo
+                resetGame();
+            }
+            updateUI();
+        });
 
-    update(ref(db, `rooms/${roomName}`), freshState);
-  }
+        // Limpa o tabuleiro e reinicia os dados no Firebase
+        function resetGame() {
+            const initialValues = {
+                board: Array(ROWS).fill(null).map(() => Array(COLS).fill('')),
+                turn: 'red',
+                winner: ''
+            };
+            set(gameRef, initialValues);
+        }
 
-  document.getElementById('resetGameBtn').addEventListener('click', () => resetDatabaseState(false));
-  document.getElementById('fullResetBtn').addEventListener('click', () => resetDatabaseState(true));
+        // Evento do botão de reiniciar jogo
+        resetBtn.addEventListener('click', resetGame);
 
-  document.body.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
-  let lastTouchEnd = 0;
-  document.addEventListener('touchend', (e) => {
-    const now = Date.now();
-    if (now - lastTouchEnd <= 300) e.preventDefault();
-    lastTouchEnd = now;
-  }, false);
-</script>
+        // Executa a criação inicial dos elementos HTML do tabuleiro
+        createBoardDOM();
+    </script>
 </body>
 </html>
