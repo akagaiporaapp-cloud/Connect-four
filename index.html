@@ -18,8 +18,21 @@
 
         h1 {
             color: #333;
-            margin-bottom: 10px;
+            margin-bottom: 5px;
         }
+
+        #player-role {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+            padding: 5px 15px;
+            border-radius: 20px;
+            background-color: #ddd;
+        }
+
+        .role-red { background-color: #ff4136 !important; color: white; }
+        .role-yellow { background-color: #ffdc00 !important; color: #333; }
+        .role-spectator { background-color: #7f8c8d !important; color: white; }
 
         #status {
             font-size: 1.2rem;
@@ -69,21 +82,16 @@
 <body>
 
     <h1>Connect Four</h1>
+    <div id="player-role">Identificando jogador...</div>
     <div id="status">Conectando ao Firebase...</div>
     <div id="board"></div>
     <button id="reset-btn">Reiniciar Jogo</button>
 
-    <!-- Usamos type="module" para permitir o uso de 'import' nativo no navegador -->
     <script type="module">
-        // Import the functions you need from the SDKs you need
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        // SDK adicional necessário para utilizar a Realtime Database
-        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
-        
-        // TODO: Add SDKs for Firebase products that you want to use
-        // https://firebase.google.com/docs/web/setup#available-libraries
+        import { getDatabase, ref, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-        // Your web app's Firebase configuration
+        // Sua configuração do Firebase
         const firebaseConfig = {
             apiKey: "AIzaSyCC26_ayjIvJmPoneYzNmMj3OwCXRbc_-g",
             authDomain: "conect-four-2f029.firebaseapp.com",
@@ -94,28 +102,72 @@
             appId: "1:5310677394:web:4a81fcd9399bad1abd414b"
         };
 
-        // Initialize Firebase
+        // Inicializa o Firebase
         const app = initializeApp(firebaseConfig);
-        
-        // Inicializa a Realtime Database do seu app
         const db = getDatabase(app);
+        
+        // Referências do Banco
         const gameRef = ref(db, 'game_state');
+        const playersRef = ref(db, 'players');
 
-        // Configurações do Tabuleiro (6 linhas x 7 colunas)
         const ROWS = 6;
         const COLS = 7;
         const boardElement = document.getElementById('board');
         const statusElement = document.getElementById('status');
+        const roleElement = document.getElementById('player-role');
         const resetBtn = document.getElementById('reset-btn');
 
-        // Objeto que controlará o estado do jogo localmente antes de sincronizar
+        // Variável local que identifica quem é esta aba instalada
+        let myRole = ""; // "red", "yellow" ou "spectator"
+
         let gameState = {
             board: Array(ROWS).fill(null).map(() => Array(COLS).fill('')),
-            turn: 'red', // 'red' ou 'yellow'
-            winner: ''   // 'red', 'yellow', 'draw' ou ''
+            turn: 'red',
+            winner: ''
         };
 
-        // Cria visualmente o tabuleiro na tela
+        // Gera uma ID única aleatória para esta aba rastrear a sua sessão
+        const myPlayerId = Math.random().toString(36).substring(2, 9);
+
+        // 1. GERENCIAMENTO DE JOGADORES (CONEXÃO E VAGAS)
+        onValue(playersRef, (snapshot) => {
+            const players = snapshot.val() || {};
+            
+            // Se eu ainda não tenho função definida, vou tentar pegar uma vaga livre
+            if (!myRole) {
+                if (!players.player1) {
+                    myRole = "red";
+                    set(ref(db, 'players/player1'), myPlayerId);
+                    onDisconnect(ref(db, 'players/player1')).remove(); // Remove se fechar a aba
+                } else if (players.player1 === myPlayerId) {
+                    myRole = "red";
+                } else if (!players.player2) {
+                    myRole = "yellow";
+                    set(ref(db, 'players/player2'), myPlayerId);
+                    onDisconnect(ref(db, 'players/player2')).remove(); // Remove se fechar a aba
+                } else if (players.player2 === myPlayerId) {
+                    myRole = "yellow";
+                } else {
+                    myRole = "spectator";
+                }
+            }
+
+            // Atualiza a interface informando quem você é no jogo
+            roleElement.className = "";
+            if (myRole === "red") {
+                roleElement.innerText = "Você é o Jogador: VERMELHO";
+                roleElement.classList.add("role-red");
+            } else if (myRole === "yellow") {
+                roleElement.innerText = "Você é o Jogador: AMARELO";
+                roleElement.classList.add("role-yellow");
+            } else {
+                roleElement.innerText = "Você é um: ESPECTADOR (Sala Cheia)";
+                roleElement.classList.add("role-spectator");
+            }
+        });
+
+
+        // 2. LOGICA DO TABULEIRO DO JOGO
         function createBoardDOM() {
             boardElement.innerHTML = '';
             for (let r = 0; r < ROWS; r++) {
@@ -130,34 +182,35 @@
             }
         }
 
-        // Atualiza o HTML e CSS sempre que houver mudança de dados no Firebase
         function updateUI() {
             for (let r = 0; r < ROWS; r++) {
                 for (let c = 0; c < COLS; c++) {
                     const cell = document.querySelector(`[data-row='${r}'][data-col='${c}']`);
-                    cell.className = 'cell'; // Reseta classes antigas
+                    cell.className = 'cell';
                     if (gameState.board[r][c] === 'red') cell.classList.add('red');
                     if (gameState.board[r][c] === 'yellow') cell.classList.add('yellow');
                 }
             }
 
-            // Atualiza o texto do Status
             if (gameState.winner) {
                 if (gameState.winner === 'draw') {
-                    statusElement.innerText = "Empate de peões!";
+                    statusElement.innerText = "Empate!";
                 } else {
-                    statusElement.innerText = `Vitória! O jogador ${gameState.winner.toUpperCase()} ganhou!`;
+                    statusElement.innerText = `Fim de Jogo! O jogador ${gameState.winner.toUpperCase()} venceu!`;
                 }
             } else {
-                statusElement.innerText = `Turno do jogador: ${gameState.turn.toUpperCase()}`;
+                // Informa o turno e avisa se é a sua vez de jogar
+                const isMyTurn = gameState.turn === myRole;
+                statusElement.innerText = `Turno do: ${gameState.turn.toUpperCase()} ${isMyTurn ? '(SUA VEZ!)' : '(Aguarde...)'}`;
             }
         }
 
-        // Gerencia o clique em uma coluna do tabuleiro
         function handleMove(col) {
-            if (gameState.winner) return; // Se o jogo já acabou, impede jogadas
+            // BLOQUEIOS CRÍTICOS:
+            if (gameState.winner) return;                  // Jogo acabou
+            if (myRole === 'spectator') return;            // Espectador não joga
+            if (gameState.turn !== myRole) return;         // Não é o seu turno!
 
-            // Lógica física: Encontra a primeira linha vazia de baixo para cima
             let row = -1;
             for (let r = ROWS - 1; r >= 0; r--) {
                 if (gameState.board[r][col] === '') {
@@ -166,70 +219,60 @@
                 }
             }
 
-            // Se a coluna escolhida já estiver cheia, ignora o clique
-            if (row === -1) return;
+            if (row === -1) return; // Coluna cheia
 
-            // Insere a peça do jogador atual na matriz
             gameState.board[row][col] = gameState.turn;
 
-            // Valida se esta jogada resultou em vitória ou empate
             if (checkWinner(row, col)) {
                 gameState.winner = gameState.turn;
             } else if (gameState.board.every(row => row.every(cell => cell !== ''))) {
                 gameState.winner = 'draw';
             } else {
-                // Passa o turno para o próximo jogador
                 gameState.turn = gameState.turn === 'red' ? 'yellow' : 'red';
             }
 
-            // Envia o novo estado do jogo modificado para a sua Realtime Database
             set(gameRef, gameState);
         }
 
-        // Função matemática para validar se existem 4 peças iguais conectadas em qualquer direção
         function checkWinner(r, c) {
             const player = gameState.board[r][c];
             const directions = [
-                [[0, 1], [0, -1]],  // Horizontal (direita, esquerda)
-                [[1, 0], [-1, 0]],  // Vertical (baixo, cima)
-                [[1, 1], [-1, -1]], // Diagonal Principal (\)
-                [[1, -1], [-1, 1]]  // Diagonal Secundária (/)
+                [[0, 1], [0, -1]],  // Horizontal
+                [[1, 0], [-1, 0]],  // Vertical
+                [[1, 1], [-1, -1]], // Diagonal \
+                [[1, -1], [-1, 1]]  // Diagonal /
             ];
 
             for (let [d1, d2] of directions) {
                 let count = 1;
-                
-                // Conta peças iguais na primeira direção
                 let row = r + d1[0], col = c + d1[1];
                 while (row >= 0 && row < ROWS && col >= 0 && col < COLS && gameState.board[row][col] === player) {
                     count++; row += d1[0]; col += d1[1];
                 }
-                
-                // Conta peças iguais na direção oposta
                 row = r + d2[0]; col = c + d2[1];
                 while (row >= 0 && row < ROWS && col >= 0 && col < COLS && gameState.board[row][col] === player) {
                     count++; row += d2[0]; col += d2[1];
                 }
-                
                 if (count >= 4) return true;
             }
             return false;
         }
 
-        // Ouve atualizações em tempo real vindas do seu Firebase
+        // Ouve atualizações do jogo
         onValue(gameRef, (snapshot) => {
             const data = snapshot.val();
             if (data) {
                 gameState = data;
             } else {
-                // Se a base de dados estiver vazia, inicia o estado limpo do jogo
                 resetGame();
             }
             updateUI();
         });
 
-        // Limpa o tabuleiro e reinicia os dados no Firebase
         function resetGame() {
+            // Apenas jogadores ativos podem resetar o jogo
+            if(myRole === 'spectator') return;
+
             const initialValues = {
                 board: Array(ROWS).fill(null).map(() => Array(COLS).fill('')),
                 turn: 'red',
@@ -238,10 +281,7 @@
             set(gameRef, initialValues);
         }
 
-        // Evento do botão de reiniciar jogo
         resetBtn.addEventListener('click', resetGame);
-
-        // Executa a criação inicial dos elementos HTML do tabuleiro
         createBoardDOM();
     </script>
 </body>
